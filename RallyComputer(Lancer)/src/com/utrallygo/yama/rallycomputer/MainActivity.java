@@ -1,3 +1,10 @@
+/*
+ *
+ * author : tyrwzl
+ * mail   : tyr.wzl at gmail.com
+ *
+*/
+
 package com.utrallygo.yama.rallycomputer;
 
 import java.text.SimpleDateFormat;

@@ -1,3 +1,8 @@
+/*
+ * author : tyrwzl
+ * mail   : tyr.wzl at gmail.com
+ *
+ */ 
 package com.utrallygo.yama.rallydeparis;
 
 import android.app.Service;
