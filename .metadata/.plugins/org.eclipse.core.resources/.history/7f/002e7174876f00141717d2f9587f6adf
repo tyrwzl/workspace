@@ -1,0 +1,38 @@
+\documentclass[twocolumn,11pt,a4paper]{jsarticle}
+%
+%
+\usepackage{amsmath,amssymb}
+\usepackage{bm}
+\usepackage{graphicx}
+\usepackage{ascmac}
+\usepackage{lscape}
+\usepackage{url}
+%
+%
+\setlength{\textwidth}{\fullwidth}
+\setlength{\textheight}{40\baselineskip}
+\addtolength{\textheight}{\topskip}
+\setlength{\voffset}{-0.2in}
+\setlength{\topmargin}{0pt}
+\setlength{\headheight}{0pt}
+\setlength{\headsep}{0pt}
+%
+%
+\title{国際経済学第2回課題}
+\author{工学部 電子情報工学科 \\	
+		03-140455 山田高寛}
+\date{\today}
+%
+%
+\begin{document}
+\maketitle
+
+\section{}
+
+
+
+
+\begin{thebibliography}{99}
+\bibitem{1}中川 聖一 :「音声言語処理と自然言語処理」,オーム社,2013
+\end{thebibliography}
+\end{document}

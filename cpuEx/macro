@@ -1,0 +1,7 @@
+// phase 
+`define ph_f 0
+`define ph_r 1
+`define ph_x 2
+`define ph_m 3
+`define ph_w 4
+// opcode

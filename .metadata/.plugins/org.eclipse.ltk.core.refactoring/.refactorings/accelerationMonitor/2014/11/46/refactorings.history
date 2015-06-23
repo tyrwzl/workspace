@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Rename field &apos;value_id&apos; in &apos;com.utrallygo.yama.accelerationmonitor.R.id&apos; to &apos;relative&apos;&#x0A;- Original project: &apos;accelerationMonitor&apos;&#x0A;- Original element: &apos;com.utrallygo.yama.accelerationmonitor.R.id.value_id&apos;&#x0A;- Renamed element: &apos;com.utrallygo.yama.accelerationmonitor.R.id.relative&apos;&#x0A;- Update references to refactored element&#x0A;- Update textual occurrences in comments and strings" delegate="false" deprecate="true" description="Rename field &apos;value_id&apos;" flags="589830" getter="false" id="org.eclipse.jdt.ui.rename.field" input="/gen&lt;com.utrallygo.yama.accelerationmonitor{R.java[R[id^value_id" name="relative" references="true" setter="false" stamp="1415973801835" textual="false" version="1.0"/>
+</session>

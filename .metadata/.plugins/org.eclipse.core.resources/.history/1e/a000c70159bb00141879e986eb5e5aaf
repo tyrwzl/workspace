@@ -1,0 +1,1084 @@
+package com.utrallygo.yama.rallycomputer;
+
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.math.BigDecimal;
+import java.io.FileDescriptor;
+import java.io.FileInputStream;
+import java.io.IOException;
+
+
+import com.android.future.usb.UsbAccessory;
+import com.android.future.usb.UsbManager;
+
+
+
+import android.app.ActionBar;
+import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
+import android.provider.Settings;
+import android.util.Log;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.widget.Button;
+import android.widget.TabHost;
+import android.widget.TabHost.TabSpec;
+import android.widget.TextView;
+import android.widget.Toast;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
+import android.graphics.Typeface;
+import android.os.ParcelFileDescriptor;
+
+
+public class MainActivity<SimpleDareFormat> extends Activity {
+	
+	//各種変数宣言部
+	//UI関連
+	boolean fFunc = false;//functionボタンのフラグ
+	boolean fFlash = false;//画面遷移後に入力をまたできるようにするフラグ.trueになるのは最初に数値ボタンを押して入力を始めた時のみ.
+						   //基本false.特別メソッドを作ったほうが簡潔に見えるような気がする
+	boolean fOD = false;
+	
+	boolean flag = false;//トリップセンサー
+
+	int ind = 0;//インジケーターフラグ.TIMから順に0を割り当てる
+	int nBuf = 0;//バッファ文字数
+	int fCP = 0;//CPボタンのフラグ.押した回数に対応.0→1→2→3
+	int fTrip = 1;//Tripフラグ.1→正,0→N,-1→負
+	private final static int WHAT = 0;//handler識別子
+	
+	double odo = 0;//総距離
+	double odoa = 0;//これは確か一時変数???
+	double scpTrip = 0;//チェックポイント間の積算トリップ          final = odo - scpTrip
+	double cpTrip = 0;//CPボタンを押した時に保持されるCP間トリップ.最終的にデータベース化  cpTrip = odo - scpTip, scpTrip += cpTrip 
+	double mTrip = 0;//SMPトリップ
+	double smTrip = 0;//積算MAPトリップ
+	double pcTime = 0;//PC処理用タイム
+	double rcTime = 0;//RestControl用タイム(finに加減)
+	double tripB = 0;//TRIP B用
+	
+	final String nTAG = "SettingTime";//現在時刻設定のインテントエラーログ
+	String[] startTime = {"12", "00", "00"};//スタート時刻(時間→0, 分→1, 秒→2)
+	String[] bufStartTime = new String[3];//スタート時刻のバッファ
+	String average = "30";//アベレージスピード
+	String[] restTime = {"01", "00", "00"};//休憩時間
+	String K = "1.0";//補正率
+	String[] buf = new String[10];//バッファ
+	String dTrip = "0.0";//TRIPプログラムの加減TRIP
+	
+	
+	//ADK関連
+	static final String TAG = "Chapter06";
+
+    private static final String ACTION_USB_PERMISSION = "jp.co.se.adk.chapter06.action.USB_PERMISSION";
+
+    private UsbManager mUsbManager;
+    private PendingIntent mPermissionIntent;
+    private boolean mPermissionRequestPending;
+
+    UsbAccessory mAccessory;
+    ParcelFileDescriptor mFileDescriptor;
+    FileInputStream mInputStream;
+    
+    
+    //インスタンスID
+    final int id_display[] = {R.id.timeView, R.id.finalTime, R.id.functionView, R.id.ind, 
+    							R.id.tripA, R.id.tripB, R.id.mark, R.id.map};
+    final int id_button[] = {R.id.function, R.id.seven, R.id.eight, R.id.nine,
+    							R.id.clear, R.id.four, R.id.five, R.id.six,
+    							R.id.enter, R.id.one, R.id.two, R.id.three,
+    							R.id.left, R.id.zero, R.id.beep, R.id.right,
+    							R.id.CP, R.id.PC, R.id.MP, R.id.tripBButton};
+	
+    TextView displayView[] = new TextView[8];
+    Button button[] = new Button[20];
+    
+    
+    
+    
+    
+	//Viewインスタンス取得部
+    TextView timeView = (TextView)findViewById(R.id.timeView);
+	TextView functionView = (TextView)findViewById(R.id.functionView);
+	TextView indView = (TextView)findViewById(R.id.ind);
+	TextView finalView = (TextView)findViewById(R.id.finalTime);
+	TextView tripAView = (TextView)findViewById(R.id.tripA);
+	TextView tripBView = (TextView)findViewById(R.id.tripB);
+	TextView mapView = (TextView)findViewById(R.id.map);
+    TextView tripView = (TextView)findViewById(R.id.mark);
+	
+	
+	
+	
+	//Handler宣言部
+	//時計とファイナルタイムをリアルタイムに更新
+	private Handler clkHandler = new Handler() {
+		  @Override
+		  public void handleMessage(Message msg) {
+			  Calendar cal = Calendar.getInstance();//毎回インスタンスを生成しないと時間が更新されない.(→メモリが足りないならシステムコール使ってsetできたはず)
+			  SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss");//表示形式を揃える
+			 
+			  double ave = Double.parseDouble(average);//アヴェレージ速度をdouble型に変換
+			  ave /= 3600;//[km/h]→[m/msec]に単位変換
+			  
+			  
+			  String finalTime = "";//ファイナル表示用
+			  if (fFlash == true) {
+				  finalTime = "Calc...";
+			  } else {
+				  double fin = (double) (
+											(
+													((cal.get(cal.AM_PM) * 12 + cal.get(cal.HOUR) - Integer.parseInt(startTime[0])) * 3600 
+															+ (cal.get(cal.MINUTE) - Integer.parseInt(startTime[1])) * 60 
+															+ cal.get(cal.SECOND) - Integer.parseInt(startTime[2])) * 1000 
+															+ cal.get(cal.MILLISECOND)
+											)  - (odo - scpTrip) * Double.parseDouble(K) / ave - pcTime
+						  				);//[msec]
+				  fin /= 1000;//[sec]
+				  fin += rcTime;//レスコンとトリッププログラムの設定
+				  BigDecimal bd = new BigDecimal(fin);
+				  finalTime = bd.setScale(2, BigDecimal.ROUND_HALF_UP).toPlainString();//小数点第3位を四捨五入
+			  }
+			  finalView.setText(finalTime);//ファイナルタイムの表示
+			  timeView.setText(sdf.format(cal.getTime()));//現在時刻の表示
+			  mapView.setText(String.valueOf(odo - smTrip) + "[m]");//マップトリップの表示(一時的)
+	          tripAView.setText(String.valueOf(odo));
+	          tripBView.setText(String.valueOf(tripB));
+			  sendEmptyMessageDelayed(msg.what, 10);//10ミリ秒後に再度呼び出し
+		  }
+	};
+	
+	/* Handler
+	 * セットされたインジケータによってindViewとfunctionViewの更新	 　
+	 */
+	private Handler indHandler = new Handler() {
+		@Override
+		public void handleMessage(Message msg) {
+			switch (ind) {
+			case 0:
+				indView.setText("HOME");
+				functionView.setText("Team GO");
+				break;
+			case 1:
+				indView.setText("START TIME");
+				if (startTime[0].length() != 2) {
+					functionView.setText(startTime[0]); 
+				} else if (startTime[0].length() == 2 && startTime[1].length() != 2) {
+					functionView.setText(startTime[0] + ":" + startTime[1]);
+				} else {
+					functionView.setText(startTime[0] + ":" + startTime[1] + ":" + startTime[2]);
+				}
+				break;
+			case 2:
+				indView.setText("AVERAGE SPEED");
+				functionView.setText(average + "[km/h]");
+				break;
+			case 3:
+				indView.setText("TRIP");
+				functionView.setText(String.valueOf(odo) + "[m]");
+				break;
+			case 4:
+				indView.setText("RC");
+				functionView.setText(restTime[0] + ":" + restTime[1] + ":" + restTime[2]);
+				break;
+			case 5:
+				indView.setText("K");
+				functionView.setText(K);
+				break;
+			case 6:
+				indView.setText("TR-P");
+				functionView.setText(dTrip + "[m]");
+				break;
+			case 7:
+				indView.setText("Last MP");
+				functionView.setText(String.valueOf(mTrip) + "[m]");
+				break;
+			case 8:
+				indView.setText("Last CP");
+				functionView.setText(String.valueOf(cpTrip));
+				break;
+			default:
+				break;
+			}
+		}
+	};
+	
+	//メソッド宣言部
+	//数値ボタン処理
+	void setNum(String num) {
+		switch (ind) {
+		//スタート時刻の文字列セット
+		case 1:
+			//スタート時刻画面になってから初めて数値ボタン
+			if (fFlash == false) {
+				int i;
+				for (i = 0; i < 3; ++i) {
+					bufStartTime[i] = startTime[i];
+					startTime[i] = "";
+				}
+				startTime[0] = num;
+				functionView.setText(startTime[0]);
+				fFlash = true;
+			} else {
+				if (startTime[0].length() != 2) {
+					startTime[0] += num;
+					functionView.setText(startTime[0]);
+				} else if (startTime[0].length() == 2 && startTime[1].length() != 2) {
+					startTime[1] += num;
+					functionView.setText(startTime[0] + ":" + startTime[1]);
+				} else if (startTime[1].length() == 2 && startTime[2].length() != 2) {
+					startTime[2] += num;
+					functionView.setText(startTime[0] + ":" + startTime[1] + ":" + startTime[2]);				
+				} 
+			}
+			break;
+		//アベレージ速度のセット
+		case 2:
+			if (fFlash == false) {
+				bufStartTime[0] = average;
+				average = num;
+				functionView.setText(average + "[km/h]");
+				fFlash = true;
+			} else {
+				average +=num;
+				functionView.setText(average + "[km/h]");
+			}
+			break;
+		//休憩時間のセット
+		case 4:
+			if (fFlash == false) {
+				int i;
+				for (i = 0; i < 3; ++i) {
+					bufStartTime[i] = restTime[i];
+					restTime[i] = "";
+				}
+				restTime[0] = num;
+				functionView.setText(restTime[0]);
+				fFlash = true;
+			} else {
+				if (restTime[0].length() != 2) {
+					restTime[0] += num;
+					functionView.setText(restTime[0]);
+				} else if (restTime[0].length() == 2 && restTime[1].length() != 2) {
+					restTime[1] += num;
+					functionView.setText(restTime[0] + ":" + restTime[1]);
+				} else if (restTime[1].length() == 2 && restTime[2].length() != 2) {
+					restTime[2] += num;
+					functionView.setText(restTime[0] + ":" + restTime[1] + ":" + restTime[2]);				
+				} 
+			}
+			break;
+		//補正率のセット
+		case 5:
+			if (fFlash == false) {
+				int i;
+				nBuf = K.length();
+				for (i = 0; i < nBuf; ++i){
+					buf[i] = K.substring(i,i+1);
+				}
+				K = num;
+				functionView.setText(K);
+				fFlash = true;
+			} else {
+				K +=num;
+				functionView.setText(K);
+			}
+			break;
+		//TR-Pプログラムのセット
+		case 6:
+			if (fFlash == false) {
+				int i;
+				nBuf = dTrip.length();
+				for (i = 0; i < nBuf; ++i){
+					buf[i] = dTrip.substring(i,i+1);
+				}
+				dTrip = num;
+				functionView.setText(dTrip + "[m]");
+				fFlash = true;
+			} else {
+				dTrip += num;
+				functionView.setText(dTrip + "[m]");
+			}
+			break;
+		default:
+			break;
+		};
+	}
+	
+	//USB接続状態を監視するブロードキャストレシーバ mUsbReceiver                                                                                                                                 
+    private final BroadcastReceiver mUsbReceiver = new BroadcastReceiver() {
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            //ACTION_USB_PERMISSIONの場合                                                                                                                                                        
+            if (ACTION_USB_PERMISSION.equals(action)) {
+                synchronized (this) {
+                    // Intent からアクセサリを取得                                                                                                                                               
+                    UsbAccessory accessory = UsbManager.getAccessory(intent);
+                    //接続許可ダイアログで OK=true, Cancel=false のどちらを押したか                                                                                                              
+                    if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+                        openAccessory(accessory);
+                    } else {
+                        Log.d(TAG, "permission denied for accessory " + accessory);
+                    }
+                    mPermissionRequestPending = false;
+                }
+            //USBホストシールドがUSBコネクタから外された場合                                                                                                                                     
+            } else if (UsbManager.ACTION_USB_ACCESSORY_DETACHED.equals(action)) {
+                UsbAccessory accessory = UsbManager.getAccessory(intent);
+                // 接続中のUSBアクセサリか？                                                                                                                                                     
+                if (accessory != null && accessory.equals(mAccessory)) {
+                    // 接続中のUSBアクセサリなら接続を閉じる                                                                                                                                     
+                    closeAccessory();
+                }
+            }
+        }
+
+    };
+    
+    //USBアクセサリ開始処理 
+    private void openAccessory(UsbAccessory accessory) {
+        //Arduinoとの通信用のParcelFileDescriptorを取得する                            
+        mFileDescriptor = mUsbManager.openAccessory(accessory);
+        if (mFileDescriptor != null) {
+            mAccessory = accessory;
+            FileDescriptor fd = mFileDescriptor.getFileDescriptor();
+            
+            //受信用のInputStreamを取得する                                                     
+            mInputStream = new FileInputStream(fd);
+
+            Thread thread = new Thread(mRunnable, "Chapter06");
+            thread.start();
+
+            Log.d(TAG, "accessory opened");
+        } else {
+            Log.d(TAG, "accessory open fail");
+        }
+    }
+
+    // USBアクセサリ終了処理 
+    private void closeAccessory() {
+        try {
+            if (mFileDescriptor != null) {
+                mFileDescriptor.close();
+            }
+        } catch (IOException e) {
+        } finally {
+            mFileDescriptor = null;
+            mAccessory = null;
+        }
+    }
+    
+    //以下暫定的.要コメントアウト
+    static final private int MESSAGE_DIRECTION    = 1;
+    private final byte VALUE_DIR_BACK    = 0x00;
+    private final byte VALUE_DIR_FRONT   = 0x01;
+    
+    //Thread処理
+    Runnable mRunnable = new Runnable() {
+        @Override
+        public void run() {
+            int ret = 0;
+            byte[] buffer = new byte[256];
+
+            while (ret >= 0) {
+                try {
+                    ret = mInputStream.read(buffer);
+                } catch (IOException e) {
+                    break;
+                }
+
+                int i = 0;
+                while (i < ret) {
+                    int len = ret - i;
+
+                    switch (buffer[i]) {
+                        // 2byteの固定長AdkCar制御プロトコル
+                        case 0x20:
+                            if (len >= 2) {
+                                Message m = Message.obtain(mHandler, MESSAGE_DIRECTION);
+                                m.obj = new Byte(buffer[i + 1]);
+                                mHandler.sendMessage(m);
+                            }
+                            i += 2;
+                            break;
+                    
+                        default:
+                            Log.i(TAG, "Unknown Message: " + buffer[i]);
+                            i = len;
+                            break;
+                    }
+                }
+
+            }
+        }
+    };
+
+    //送信データをHandlerに送る
+    private Handler mHandler = new Handler() {
+        @Override
+        public void handleMessage(Message msg) {
+            Byte data = (Byte) msg.obj;
+            switch (msg.what) {
+                case MESSAGE_DIRECTION:
+                    handleMessageDirection(data);
+                    break;
+                default:
+                	break;
+            }
+        }
+
+    };
+
+    //odo更新部
+    private void handleMessageDirection(Byte data) {
+        if (data.byteValue() == VALUE_DIR_FRONT) {
+            if (flag == false) {
+            	switch (fTrip) {
+				case 1:
+					odo += 0.392464678179;
+					tripB += 0.392464678179;
+					break;
+				case 0:
+					break;
+				case -1:
+					odo -= 0.392464678179;
+					tripB -= 0.392464678179;
+					break;
+				default:
+					break;
+            	}
+            }
+			
+            flag = true;
+        } else {
+            flag = false;
+        }
+    }
+    
+	
+    //アプリ起動時の処理 OnCreate()メソッド（Activityライフサイクル)
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.main);
+        // UsbManager のインスタンスを取得    
+        mUsbManager = UsbManager.getInstance(this);
+
+        //パーミッションをリクエストする際の独自Intentを作成する                                                                                                                                  
+        mPermissionIntent = PendingIntent.getBroadcast(this, 0, new Intent(
+                ACTION_USB_PERMISSION), 0);
+
+        //Arduino に接続/切断するため、ブロードキャストレシーバを登録する                                                                                                                 
+        IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
+        filter.addAction(UsbManager.ACTION_USB_ACCESSORY_DETACHED);
+        registerReceiver(mUsbReceiver, filter);
+        
+        //Tab
+        // TabHostクラスを取得
+        TabHost tabHost = (TabHost)findViewById(android.R.id.tabhost);
+
+        // TabHostクラス初期化
+        tabHost.setup();
+
+        // タブ１ 設定
+        TabSpec tab1 = tabHost.newTabSpec("tab1"); // タブの生成
+        tab1.setIndicator("RallyComputer");               // タブに表示する文字列をセット
+        tab1.setContent(R.id.contentlayout1);      // タブ選択時に表示するビューをセット
+        tabHost.addTab(tab1);                      // タブホストにタブを追加
+
+        // タブ２ 設定
+        TabSpec tab2 = tabHost.newTabSpec("tab2"); // タブの生成
+        tab2.setIndicator("Google Map");               // タブに表示する文字列をセット
+        tab2.setContent(R.id.contentlayout2);      // タブ選択時に表示するビューをセット
+        tabHost.addTab(tab2);                      // タブホストにタブを追加
+
+        // 初期表示設定
+        tabHost.setCurrentTab(0);
+        
+        // ActionBarの表示を消す
+        ActionBar actionBar = getActionBar();
+		actionBar.hide();
+		
+		//フォントをLet's Go Digitalに変更する
+		timeView.setTypeface(Typeface.createFromAsset(getResources().getAssets(), "Let's go Digital Regular.ttf"));
+		finalView.setTypeface(Typeface.createFromAsset(getResources().getAssets(), "Let's go Digital Regular.ttf"));
+		functionView.setTypeface(Typeface.createFromAsset(getResources().getAssets(), "Let's go Digital Regular.ttf"));
+		tripAView.setTypeface(Typeface.createFromAsset(getResources().getAssets(), "Let's go Digital Regular.ttf"));
+		tripBView.setTypeface(Typeface.createFromAsset(getResources().getAssets(), "Let's go Digital Regular.ttf"));
+
+	}
+	
+	
+	//移行各種ボタンのクリック時の動作.どのボタンの動作かはidで判別すること
+    
+		@Click(resName="CP")
+		void clickCP() {
+			//CP処理
+			cpTrip = odo - scpTrip;
+			scpTrip += cpTrip;
+			ind = 1;
+			indHandler.sendEmptyMessage(WHAT);
+			fCP = 1;
+			pcTime = 0;
+		}
+		
+		@Click(resName="PC")
+		void clickPC() {
+			//PC処理
+			pcTime += (odo - scpTrip) / (Double.parseDouble(average) / 3600);
+			ind = 2;
+			indHandler.sendEmptyMessage(WHAT);
+		}
+		
+		@Click(resName="MP")
+		void clickMP() {
+			//MP処理
+			mTrip = odo - smTrip;
+			smTrip += mTrip;
+			if (ind == 7) functionView.setText(String.valueOf(mTrip) + "[m]");
+		}
+		
+		@Click(resName="function")
+		void clickFunction() {
+			//functionのON,OFF切り替え
+			if (fFunc) {
+				fFunc = false;
+			} else {
+				fFunc = true;
+			}
+		}
+		
+		@Click(resName="clear")
+		void clickClear() {
+			//入力文字クリア
+			switch (ind) {
+				case 1:
+					for (int i = 0; i < 3; ++i) {
+						startTime[i] = bufStartTime[i];
+					}
+					functionView.setText(startTime[0] + ":" + startTime[1] + ":" + startTime[2]);
+					break;
+				case 2:
+					average = bufStartTime[0];
+					functionView.setText(average + "[km/h]");
+					break;
+				case 4:
+					for (int i = 0; i < 3; ++i) {
+						restTime[i] = bufStartTime[i];
+					}
+					functionView.setText(restTime[0] + ":" + restTime[1] + ":" + restTime[2]);
+					break;
+				case 5:
+					K = "";
+					for (int i = 0; i < nBuf; ++i) {
+						K += buf[i];
+					}
+					functionView.setText(K);
+					break;
+				case 6:
+					dTrip = "";
+					for (int i = 0; i < nBuf; ++i) {
+						dTrip += buf[i];
+					}
+					functionView.setText(dTrip + "[m]");
+					break;
+				default:
+					break;
+			}
+			fFlash = false;
+		}
+		
+		@Click(resName="beep")
+		void clickBeep() {
+			setNum(".");
+		}
+		
+		@Click(resName="enter")
+		void clickEnter() {
+			//入力終了
+			switch (ind) {
+			case 1:
+				if (startTime[0].length() == 2 && startTime[1].length() == 2 && startTime[2].length() == 2) {
+					fFlash = false;
+					functionView.setText(startTime[0] + ":" + startTime[1] + ":" + startTime[2]);
+				} else {
+					//トースト「入力が終わっていません」
+					fFlash = false;
+					Toast.makeText(this, "Not Compleated Input", Toast.LENGTH_LONG).show();
+					for (int i = 0; i < 3; ++i) {
+						startTime[i] = bufStartTime[i];
+					}
+					functionView.setText(startTime[0] + ":" + startTime[1] + ":" + startTime[2]);
+				}
+				break;
+			case 2:
+				if (average.length() != 0) {
+					fFlash = false;	
+					functionView.setText(average + "[km/h]");
+				} else {
+					//トースト 同上
+					fFlash = false;
+					Toast.makeText(this, "Not Compleated Input", Toast.LENGTH_LONG).show();
+					average = bufStartTime[0];
+					functionView.setText(average + "[km/h]");
+				}
+				break;
+			case 4:
+				if (restTime[0].length() == 2 && restTime[1].length() == 2 && restTime[2].length() == 2) {
+					fFlash = false;
+					functionView.setText(restTime[0] + ":" + restTime[1] + ":" + restTime[2]);
+				} else {
+					//トースト「入力が終わっていません」
+					fFlash = false;
+					Toast.makeText(this, "Not Compleated Input", Toast.LENGTH_LONG).show();
+					for (int i = 0; i < 3; ++i) {
+						restTime[i] = bufStartTime[i];
+					}
+					functionView.setText(restTime[0] + ":" + restTime[1] + ":" + restTime[2]);
+				}
+				break;
+			case 5:
+				if (K.length() != 0) {
+					fFlash = false;
+					functionView.setText(K);
+				} else {
+					//トースト
+					fFlash = false;
+					Toast.makeText(this, "Not Compleated Input", Toast.LENGTH_LONG).show();
+					K = "";
+					for (int i = 0; i < nBuf; ++i) {
+						K += buf[i];
+					}
+				}
+				break;
+			case 6:
+				if (dTrip.length() != 0) {
+					fFlash = false;	
+					functionView.setText(dTrip + "[m]");
+				} else {
+					//トースト
+					fFlash = false;
+					Toast.makeText(this, "Not Compleated Input", Toast.LENGTH_LONG).show();
+					dTrip = "";
+					for (int i = 0; i < nBuf; ++i) {
+						dTrip += buf[i];
+					}
+					functionView.setText(dTrip + "[m]");
+				}
+				break;
+			default:
+				break;
+			}
+			//OD処理
+			if (fOD) {
+				double k = Double.parseDouble(dTrip) / cpTrip;
+				K = String.valueOf(k);
+				ind = 5;
+				indHandler.sendEmptyMessage(WHAT);
+				fOD = false;
+				fCP = 0;
+			}
+			//CP処理
+			if (fCP == 1) {
+				ind = 2;
+				indHandler.sendEmptyMessage(WHAT);
+				fCP = 2;
+			} else if (fCP == 2) {
+				ind = 8;
+				indHandler.sendEmptyMessage(WHAT);
+				fCP = 3;
+			} else if (fCP == 3 ) {
+				ind = 1;
+				indHandler.sendEmptyMessage(WHAT);
+				fCP = 0;
+				rcTime = 0;
+			}
+		}
+		
+		@Click(resName="zero")
+		void clickZero() {
+			if (fFunc) {
+				//clock処理
+				fFunc = false;
+				if (ind == 0) {
+					//時計設定画面を開く
+					Intent it = new Intent(Settings.ACTION_DATE_SETTINGS);
+					try{
+						startActivity(it);
+					}
+					catch(ActivityNotFoundException e){
+				        Log.e(nTAG, "ActivityNotFoundException");
+				    }
+				}
+			} else {
+				//zero代入
+				setNum("0");
+			}	
+		}
+		
+		@Click(resName="one")
+		void clickOne() {
+			if (fFunc) {
+				//OD処理
+				fFunc = false;
+				fOD = true;
+				ind = 6;
+				indHandler.sendEmptyMessage(WHAT);
+			} else {
+				//1を代入
+				setNum("1");
+			}
+		}
+		
+		@Click(resName="two")
+		void clickTwo() {
+			if (fFunc) {
+				//区間距離表示.その他のファンクションもつけるべき？
+				fFunc = false;
+			} else {
+				//2を代入
+				setNum("2");
+			}
+		}
+		
+		@Click(resName="three")
+		void clickThree() {
+			if (fFunc) {
+				//トリップ反転(順繰り?)
+				fFunc = false;
+				switch (fTrip) {
+					case 1:
+						fTrip = 0;
+						tripView.setText("N");
+						break;
+					case 0:
+						fTrip = -1;
+						tripView.setText("-");
+						break;
+					case -1:
+						fTrip = 1;
+						tripView.setText("+");
+						break;
+					default:
+						break;
+				}
+			} else {
+				//3を代入
+				setNum("3");
+			}
+		}
+		
+		@Click(resName="four")
+		void clickFour() {
+			if (fFunc) {
+				//リコール機能
+				fFunc = false;
+			} else {
+				//4を代入
+				setNum("4");
+			}
+		}
+		
+		@Click(resName="five")
+		void clickFive() {
+			if (fFunc) {
+				//レスコン+
+				fFunc = false;
+				rcTime += Double.parseDouble(restTime[0]) * 60 * 60 + Double.parseDouble(restTime[1]) * 60 + Double.parseDouble(restTime[2]); 
+			} else {
+				//5を代入
+				setNum("5");
+			}
+		}
+		
+		@Click(resName="six")
+		void clickSix() {
+			if (fFunc) {
+				//レスコン-
+				fFunc = false;
+				rcTime -= Double.parseDouble(restTime[0]) * 60 * 60 + Double.parseDouble(restTime[1]) * 60 + Double.parseDouble(restTime[2]);
+			} else {
+				//6を代入
+				setNum("6");
+			}
+		}
+		
+		@Click(resName="seven")
+		void clickSeven() {
+			if (fFunc) {
+				//明るさ調整
+				fFunc = false;
+			} else {
+				//7を代入
+				setNum("7");
+			}
+		}
+		
+		@Click(resName="eight")
+		void clickEight() {
+			if (fFunc) {
+				//トリップ+
+				fFunc = false;
+				odo += Double.parseDouble(dTrip);
+				tripB += Double.parseDouble(dTrip);
+			} else {
+				//8を代入
+				setNum("8");
+			}
+		}
+		
+		@Click(resName="nine")
+		void clickNine() {
+			if (fFunc) {
+				//トリップ-
+				fFunc = false;
+				odo -= Double.parseDouble(dTrip);
+				tripB -= Double.parseDouble(dTrip);
+			} else {
+				//9を代入
+				setNum("9");
+			}
+		}
+		
+		@Click(resName="right")
+		void clickRight() {
+			switch (ind) {
+			case 0:
+				ind = 1;
+				break;
+			case 1:
+				//fFlashがtrueならスタート時刻の入力が完了していない(Enterボタンを押していないor入力文字が足りていない)ので
+				//入力前(bufferしてある)のものに戻す.clickLeftも同様
+				if (fFlash == true) {
+					int i;
+					for (i = 0; i < 3; ++i) {
+						startTime[i] = bufStartTime[i];
+					}
+					functionView.setText(startTime[0] + ":" + startTime[1] + ":" + startTime[2]);
+					fFlash = false;
+				}
+				ind = 2;
+				break;
+			case 2:
+				if (fFlash == true) {
+					average = bufStartTime[0];
+					functionView.setText(average + "[km/h]");
+					fFlash = false;
+				}
+				ind = 4;
+				break;
+			case 4:
+				if (fFlash == true) {
+					int i;
+					for (i = 0; i < 3; ++i) {
+						restTime[i] = bufStartTime[i];
+					}
+					functionView.setText(restTime[0] + ":" + restTime[1] + ":" + restTime[2]);
+					fFlash = false;
+				}
+				ind = 5;
+				break;
+			case 5:
+				if (fFlash == true) {
+					int i;
+					K = "";
+					for (i = 0; i < nBuf; ++i) {
+						K += buf[i];
+					}
+					functionView.setText(K);
+					fFlash = false;
+				}
+				ind = 6;
+				break;
+			case 6:
+				if (fFlash == true) {
+					int i;
+					dTrip = "";
+					for (i = 0; i < nBuf; ++i) {
+						dTrip += buf[i];
+					}
+					functionView.setText(dTrip + "[m]");
+					fFlash = false;
+				}
+				ind = 7;
+				break;
+			case 7:
+				ind = 0;
+				break;
+			default:
+				++ind;
+				break;
+			}
+			fFunc = false;
+			indHandler.sendEmptyMessage(WHAT);
+		}
+		
+		@Click(resName="left")
+		void clickLeft() {
+			switch (ind) {
+			case 0:
+				ind = 7;
+				break;
+			case 1:
+				if (fFlash == true) {
+					int i;
+					for (i = 0; i < 3; ++i) {
+						startTime[i] = bufStartTime[i];
+					}
+					functionView.setText(startTime[0] + ":" + startTime[1] + ":" + startTime[2]);
+					fFlash = false;
+				}
+				ind = 0;
+				break;
+			case 2:
+				if (fFlash == true) {
+					average = bufStartTime[0];
+					functionView.setText(average);
+					fFlash = false;
+				}
+				ind = 1;
+				break;
+			case 4:
+				if (fFlash == true) {
+					int i;
+					for (i = 0; i < 3; ++i) {
+						restTime[i] = bufStartTime[i];
+					}
+					functionView.setText(restTime[0] + ":" + restTime[1] + ":" + restTime[2]);
+					fFlash = false;
+				}
+				ind = 2;
+				break;
+			case 5:
+				if (fFlash == true) {
+					int i;
+					K = "";
+					nBuf = K.length();
+					for (i = 0; i < nBuf; ++i) {
+						K += bufStartTime[i];
+					}
+					functionView.setText(K);
+					fFlash = false;
+				}
+				ind = 4;
+				break;
+			case 6:
+				if (fFlash == true) {
+					int i;
+					dTrip = "";
+					for (i = 0; i < nBuf; ++i) {
+						dTrip += buf[i];
+					}
+					functionView.setText(dTrip + "[m]");
+					fFlash = false;
+				}
+				ind = 5;
+				break;
+			default:
+				--ind;
+				break;
+			}
+			fFunc = false;
+			indHandler.sendEmptyMessage(WHAT);
+		}
+		
+		@Click(resName="tripBButton")
+		void clicktripB() {
+			tripB = 0;
+		}
+	
+		
+		
+	
+	//アプリ起動時の処理 OnResume()メソッド（Activityライフサイクル)
+	@Override
+	protected void onResume() {
+		super.onResume();
+		clkHandler.sendEmptyMessage(WHAT);
+		indHandler.sendEmptyMessage(WHAT);
+		
+		  //既に通信しているか                                                                    
+        if (mInputStream != null) {
+            return;
+        }
+
+        // 接続されているUSBアクセサリの確認                                                    
+        UsbAccessory[] accessories = mUsbManager.getAccessoryList();
+        UsbAccessory accessory = (accessories == null ? null : accessories[0]);
+        if (accessory != null) {
+            // USBアクセサリ にアクセスする権限があるかチェック                                 
+            if (mUsbManager.hasPermission(accessory)) {
+                // 接続許可されているならば、アプリを起動                                       
+                openAccessory(accessory);
+            } else {
+                // 接続許可されていないのならば、パーミッションインテント発行                   
+                synchronized (mUsbReceiver) {
+                    if (!mPermissionRequestPending) {
+                        // パーミッションを依頼                                                 
+                        mUsbManager.requestPermission(accessory, mPermissionIntent);
+                        mPermissionRequestPending = true;
+                    }
+                }
+            }
+        } else {
+            Log.d(TAG, "mAccessory is null");
+        }
+
+	}
+    
+	//他のActivityが開始される時の処理 OnPause()メソッド（Activityライフサイクル）
+	@Override
+	protected void onPause() {
+		super.onPause();
+		clkHandler.removeMessages(WHAT);
+		indHandler.removeMessages(WHAT);
+		closeAccessory();
+	}
+	
+	//アプリ終了時の処理 OnDestroy()メソッド（Activityライフサイクル）                          
+    @Override
+    public void onDestroy() {
+        unregisterReceiver(mUsbReceiver);
+        super.onDestroy();
+    }
+
+	
+	//オプションメニュー関連
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.main, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        // Handle action bar item clicks here. The action bar will
+        // automatically handle clicks on the Home/Up button, so long
+        // as you specify a parent activity in AndroidManifest.xml.
+        int id = item.getItemId();
+        if (id == R.id.action_settings) {
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+}
+
+private void setButtonsListener() {
+
+    // give DataHolder instance to ButtonsListener
+    ButtonsListener b = new ButtonsListener();
+
+    for (int i =0; i < 16; ++i) {
+        nButton[i].setOnClickListener(b);
+    }
+}
